@@ -201,7 +201,7 @@ class SocketApi
 	 * 
 	 * @return bool True if message has been sent, false otherwise
 	 */
-	public function sendSmsFp() {
+	public function sendSms() {
 		$this->openSocket();
 		if ($this->fp) {
 			if(isset($this->to) && $this->to) {

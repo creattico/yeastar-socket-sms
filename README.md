@@ -21,6 +21,15 @@ $s = new SocketApi([
 ]);
 ```
 
+### Send sms 
+``` php
+$s->sendSms();
+```
+### Close the socket
+``` php
+$s->closeSocket();
+```
+
 ## Debug
 Setting the `debug` param to `true`, you can access to the `log` property array
 
