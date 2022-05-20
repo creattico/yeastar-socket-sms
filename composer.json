@@ -3,7 +3,7 @@
     "description": "SMS class for yeastar device: allow you to send sms via socket API",
     "type": "library",
     "require": {
-        "php": "7.2"
+        "php": "^7.2"
     },
     "license": "MIT",
     "authors": [
