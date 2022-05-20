@@ -1,19 +1,4 @@
 <?php
-
-/**
- * YeastarHttp - PHP sms class for Yeastar TGxxxx devices.
- * PHP Version 7.
- *
- * @see https://github.com/creattico/yeastar-socket-sms A composer library to send sms via socket through Yeastar Gateway
- *
- * @author    Domenico Carbone (creattico) <dev@creattica.it>
- * @copyright 2022 Domenico Carbone
- * @license   http://www.gnu.org/copyleft/lesser.html GNU Lesser General Public License
- * @note      This program is distributed in the hope that it will be useful - WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.
- */
-
 namespace YeastarSocket;
 
 class SocketApi
