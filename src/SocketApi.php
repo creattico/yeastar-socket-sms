@@ -118,6 +118,7 @@ class SocketApi
 			if ($this->debug) {
 				$this->log[] = "Error opening socket with " . $this->host;
 			}
+			return false;
 		} else {
 			if ($this->debug) {
 				$this->log[] = "Socket with " . $this->host . " opened";
