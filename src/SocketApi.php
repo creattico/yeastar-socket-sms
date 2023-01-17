@@ -111,8 +111,8 @@ class SocketApi
 	 * @return mixed
 	 */
 	public function openSocket() {
-		$this->ip_address = gethostbyname($this->host);
-		$this->fp = fsockopen($this->ip_address, $this->port, $errno, $errstr, 5);
+		$this->ip_address = @gethostbyname($this->host);
+		$this->fp = @fsockopen($this->ip_address, $this->port, $errno, $errstr, 5);
 
 		if (!$this->fp) {
 			if ($this->debug) {
@@ -124,7 +124,7 @@ class SocketApi
 				$this->log[] = "Socket with " . $this->host . " opened";
 			}
 			// send the auth
-			$ok = fwrite($this->fp, "Action: Login\r\nUsername: ".urlencode($this->account)."\r\nSecret: ".urlencode($this->password)."\r\n\r\n"); 
+			$ok = @fwrite($this->fp, "Action: Login\r\nUsername: ".urlencode($this->account)."\r\nSecret: ".urlencode($this->password)."\r\n\r\n"); 
 
 			if(!$ok) {
 				if ($this->debug) {
