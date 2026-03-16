@@ -2,262 +2,255 @@
 
 /**
  * YeastarSocket - PHP sms class for Yeastar TGxxxx devices.
- * PHP Version 7.
+ * PHP Version 7.4+.
  *
  * @see https://github.com/creattico/yeastar-socket-sms A composer library to send sms via socket through Yeastar Gateway
  *
  * @author    Domenico Carbone (creattico) <dev@creattica.it>
- * @copyright 2022 Domenico Carbone
- * @license   http://www.gnu.org/copyleft/lesser.html GNU Lesser General Public License
- * @note      This program is distributed in the hope that it will be useful - WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.
+ * @copyright 2024 Domenico Carbone
+ * @license   http://opensource.org/licenses/MIT MIT License
  */
 
 namespace YeastarSocket;
 
+use YeastarSocket\Exceptions\SmsSendException;
+use YeastarSocket\Exceptions\SocketConnectionException;
+
 class SocketApi
 {
-	/**
-	 * Log array
-	 * 
-	 * @return array
-	 */
-	public $log = [];
+    /**
+     * Log array
+     *
+     * @var array<string>
+     */
+    public array $log = [];
 
-	/**
-	 * Http protocol for calls
-	 * @var string
-	 */
-	protected $protocol = 'https';
+    /**
+     * Host for socket connection
+     *
+     * @var string
+     */
+    protected string $host = 'localhost';
 
-	/**
-	 * Host for calls
-	 * @var string
-	 */
-	protected $host = 'localhost';
+    /**
+     * Port for socket connection
+     *
+     * @var int
+     */
+    protected int $port = 5038;
 
-	/**
-	 * Http protocol for calls
-	 * @var string
-	 */
-	protected $port = 5038;
+    /**
+     * Server IP address (resolved from host)
+     *
+     * @var string
+     */
+    protected string $ip_address = '127.0.0.1';
 
-	/**
-	 * Server IP address
-	 * @var string
-	 */
-	protected $ip_address = '127.0.0.1';
+    /**
+     * Account username
+     *
+     * @var string
+     */
+    protected string $account = '';
 
-	/**
-	 * Account
-	 * @var string
-	 */
-	protected $account = '';
+    /**
+     * Account password
+     *
+     * @var string
+     */
+    protected string $password = '';
 
+    /**
+     * Recipient phone number
+     *
+     * @var string
+     */
+    protected string $to = '';
 
-	/**
-	 * Password
-	 * @var string
-	 */
-	protected $password = '';
+    /**
+     * SMS message content
+     *
+     * @var string
+     */
+    protected string $message = '';
 
+    /**
+     * Gateway port (trunk port + 1). Default: 1
+     *
+     * @var int
+     */
+    protected int $gateway_port = 1;
 
-	/**
-	 * To: the recipient phone number
-	 * @var string
-	 */
-	protected $to = '';
+    /**
+     * Socket connection timeout in seconds. Default: 5
+     *
+     * @var int
+     */
+    protected int $timeout = 5;
 
+    /**
+     * Enable debug logging
+     *
+     * @var bool
+     */
+    protected bool $debug = false;
 
-	/**
-	 * Message: the message to be sent
-	 * @var string
-	 */
-	protected $message = '';
+    /**
+     * Socket file pointer
+     *
+     * @var resource|false
+     */
+    protected $fp = false;
 
+    /**
+     * Unique SMS identifier
+     *
+     * @var string
+     */
+    protected string $smsId = '';
 
-	/**
-	 * Gateway port: the yeastar port to use. Default 1
-	 * @var string
-	 */
-	protected $gateway_port = 1;
+    /**
+     * Class constructor
+     *
+     * @param array<string, mixed> $data Initial property values
+     */
+    public function __construct(array $data = [])
+    {
+        foreach ($data as $key => $value) {
+            if (property_exists($this, $key)) {
+                $this->$key = $value;
+            }
+        }
+    }
 
+    /**
+     * Open socket and authenticate with the Yeastar gateway.
+     *
+     * @throws SocketConnectionException if the connection or authentication fails
+     */
+    public function openSocket(): void
+    {
+        $this->ip_address = gethostbyname($this->host);
 
-	/**
-	 * Debug
-	 * @var bool
-	 */
-	protected $debug = false;
+        try {
+            $this->fp = fsockopen($this->ip_address, $this->port, $errno, $errstr, $this->timeout);
+        } catch (\ErrorException $e) {
+            $this->log("Error opening socket with {$this->host}: {$e->getMessage()}");
+            throw new SocketConnectionException("Unable to connect to {$this->host}:{$this->port} — {$e->getMessage()}", 0, $e);
+        }
 
+        if (!$this->fp) {
+            $this->log("Error opening socket with {$this->host}: [{$errno}] {$errstr}");
+            throw new SocketConnectionException("Unable to connect to {$this->host}:{$this->port} — [{$errno}] {$errstr}");
+        }
 
-	/**
-	 * Class constructor
-	 * 
-	 * @param array $data Initial property value
-	 * 
-	 * @return void
-	 */
-	public function __construct($data = [])
-	{
-		foreach ($data as $key => $value) {
-			$this->$key = $value;
-		}
-	}
+        $this->log("Socket with {$this->host} opened");
 
-	/**
-	 * Open socket
-	 * 
-	 * @return mixed
-	 */
-	public function openSocket() {
-		$this->ip_address = @gethostbyname($this->host);
-		$this->fp = @fsockopen($this->ip_address, $this->port, $errno, $errstr, 5);
+        $written = fwrite($this->fp, "Action: Login\r\nUsername: " . urlencode($this->account) . "\r\nSecret: " . urlencode($this->password) . "\r\n\r\n");
 
-		if (!$this->fp) {
-			if ($this->debug) {
-				$this->log[] = "Error opening socket with " . $this->host;
-			}
-			return false;
-		} else {
-			if ($this->debug) {
-				$this->log[] = "Socket with " . $this->host . " opened";
-			}
-			// send the auth
-			$ok = @fwrite($this->fp, "Action: Login\r\nUsername: ".urlencode($this->account)."\r\nSecret: ".urlencode($this->password)."\r\n\r\n"); 
+        if (!$written) {
+            $this->log("Error writing login action to socket");
+            throw new SocketConnectionException("Failed to send login action to {$this->host}");
+        }
 
-			if(!$ok) {
-				if ($this->debug) {
-					$this->log[] = "Errore socket NeoGateManager";
-				}
-				return false;
-			} else {
-				if ($this->debug) {
-					$this->log[] = "Connection established with " . $this->host;
-				}
-			}
+        $this->log("Login action sent to {$this->host}");
 
-			// check the first row
-			$result = fgets($this->fp);
-			if(!$result or trim($result) != 'Asterisk Call Manager/1.1') {
-				// auth failed
-				$this->fp = false;
-				if ($this->debug) {
-					$this->log[] = "Authentication failed: this response row (1) must contains 'Asterisk Call Manager/1.1'";
-				}
-				return false;
-			} else {
-				if ($this->debug) {
-					$this->log[] = "Authentication accepted: this response row (2) contains 'Asterisk Call Manager/1.1'";
-				}
-			}
+        $expectations = [
+            'Asterisk Call Manager/1.1',
+            'Response: Success',
+            'Message: Authentication accepted',
+        ];
 
-			// check the second row
-			$result = fgets($this->fp);
-			if(!$result or trim($result) != 'Response: Success') {
-				// auth failed
-				$this->fp = false;
-				if ($this->debug) {
-					$this->log[] = "Authentication failed: this response row (2) must contains 'Response: Success'";
-				}
-				return false;
-			} else {
-				if ($this->debug) {
-					$this->log[] = "Authentication accepted: this response row (2) contains 'Response: Success'";
-				}
-			}
+        foreach ($expectations as $index => $expected) {
+            $row = fgets($this->fp);
+            if ($row === false || trim($row) !== $expected) {
+                $this->fp = false;
+                $actual = $row === false ? '(no response)' : trim($row);
+                $this->log("Authentication failed at row " . ($index + 1) . ": expected '{$expected}', got '{$actual}'");
+                throw new SocketConnectionException("Authentication failed: expected '{$expected}', got '{$actual}'");
+            }
+            $this->log("Auth row " . ($index + 1) . " OK: {$expected}");
+        }
 
-			// check the third row
-			$result = fgets($this->fp);
-			if(!$result or trim($result) != 'Message: Authentication accepted') {
-				// auth failed
-				$this->fp = false;
-				if ($this->debug) {
-					$this->log[] = "Authentication failed: this response row (3) must contains 'Message: Authentication accepted'";
-				}
-				return false;
-			} else {
-				if ($this->debug) {
-					$this->log[] = "Authentication accepted: this response row (3) contains 'Message: Authentication accepted'";
-				}
-			}
+        // fourth row must be blank (end of response block)
+        $blank = fgets($this->fp);
+        if ($blank === false) {
+            $this->fp = false;
+            $this->log("Authentication failed: missing blank line after auth response");
+            throw new SocketConnectionException("Authentication failed: missing blank line after auth response");
+        }
 
-			// check the fourth row (void)
-			$result = fgets($this->fp);
-			if( $result === false ) {
-				// auth failed
-				$this->fp = false;
-				if ($this->debug) {
-					$this->log[] = "Authentication failed: this response row (4) could be void";
-				}
-				return false;
-			} else {
-				$this->log[] = "Authentication success: this response row (4) is void";
-			}
-		}
-	}
+        $this->log("Authentication successful");
+    }
 
-	/**
-	 * Send sms message via socket
-	 * 
-	 * @return bool True if message has been sent, false otherwise
-	 */
-	public function sendSms() {
-		$this->openSocket();
-		if ($this->fp) {
-			if(isset($this->to) && $this->to) {
-				
-				$this->smsId = time().rand();
-	
-				$message = urlencode($this->message);
-				
-				// send the smm
-				$ok = fwrite($this->fp, "Action: smscommand\r\ncommand: gsm send sms " . $this->gateway_port . " ". $this->to . " \"" . $message . "\" " . $this->smsId . "\r\n\r\n");
+    /**
+     * Send SMS message via socket.
+     *
+     * @throws SocketConnectionException if the connection fails
+     * @throws SmsSendException if the SMS cannot be sent or the recipient is missing
+     * @return bool True if the message was sent successfully
+     */
+    public function sendSms(): bool
+    {
+        $this->openSocket();
 
-				if (!$ok) {
-					if ($this->debug) {
-						$this->log[] = "Something wrong with the socket";
-					}
-					return false;
-				} else {
-					if ($this->debug) {
-						$this->log[] = "Send sms command sent successfully";
-					}
-				}
+        if (!$this->fp) {
+            throw new SocketConnectionException("Socket is not open");
+        }
 
-				// read lines
-				$result = fgets($this->fp);
-				$result .= fgets($this->fp);
-				$result .= fgets($this->fp);
-				$result .= fgets($this->fp);
-				
-				// if success
-				if ($result) {
-					// sms succeeded update the command status to sent 
-					if ($this->debug) {
-						$this->log[] = "Sms message sent successfully";
-					}
-					return true;
-				}
-			}
-		}
-		return false;
-	}
+        if (empty($this->to)) {
+            throw new SmsSendException("Recipient phone number is required");
+        }
 
-	/**
-	 * Close Socket connection
-	 * 
-	 * Perform a socket disconnection
-	 * 
-	 * @return void
-	 */
-	public function closeSocket() {
-		if ($this->fp) {
-			fclose($this->fp);
-			$this->fp = false;
-		}
-		if ($this->debug) {
-			$this->log[] = "Socket connection closed successfully";
-		}
-	}
+        $this->smsId = (string) (time() . rand());
+
+        $written = fwrite($this->fp, "Action: smscommand\r\ncommand: gsm send sms " . $this->gateway_port . " " . $this->to . " \"" . $this->message . "\" " . $this->smsId . "\r\n\r\n");
+
+        if (!$written) {
+            $this->log("Error writing SMS command to socket");
+            throw new SmsSendException("Failed to write SMS command to socket");
+        }
+
+        $this->log("SMS command sent (id: {$this->smsId})");
+
+        $response = '';
+        for ($i = 0; $i < 4; $i++) {
+            $line = fgets($this->fp);
+            if ($line !== false) {
+                $response .= $line;
+            }
+        }
+
+        if (empty(trim($response))) {
+            $this->log("Empty response after SMS command");
+            throw new SmsSendException("Empty response from gateway after SMS command");
+        }
+
+        $this->log("SMS sent successfully (id: {$this->smsId})");
+
+        return true;
+    }
+
+    /**
+     * Close the socket connection.
+     */
+    public function closeSocket(): void
+    {
+        if ($this->fp) {
+            fclose($this->fp);
+            $this->fp = false;
+        }
+
+        $this->log("Socket connection closed");
+    }
+
+    /**
+     * Write a message to the log array (only when debug is enabled).
+     */
+    protected function log(string $message): void
+    {
+        if ($this->debug) {
+            $this->log[] = $message;
+        }
+    }
 }

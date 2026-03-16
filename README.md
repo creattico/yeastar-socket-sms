@@ -1,38 +1,64 @@
 # Yeastar Socket SMS
-This library is distributed for free use.
 
-## Install with composer
+PHP library to send SMS via socket API through Yeastar TGxxxx gateways.
+
+## Requirements
+
+- PHP >= 7.4
+
+## Install
+
 ```bash
 composer require creattico/yeastar-socket-sms
 ```
 
-## How to use
-Initialize the class, passing in all parameters
-``` php
-$s = new SocketApi([
-	'host' => 'domain.ext',
-	'port' => 1000,
-	'gateway_port' => 2, // the trunk port+1
-	'account' => 'username',
-	'password' => 'password',
-	'to' => '00111234567890', // the recipient number preceded by 4 digit country code
-	'message' => "The message content",
-	'debug' => true // optional: if you want to enable the debug
-]);
-```
+## Usage
 
-### Send sms 
-``` php
-$s->sendSms();
-```
-### Close the socket
-``` php
-$s->closeSocket();
+```php
+use YeastarSocket\SocketApi;
+use YeastarSocket\Exceptions\SocketConnectionException;
+use YeastarSocket\Exceptions\SmsSendException;
+
+$sms = new SocketApi([
+    'host'         => 'domain.ext',       // Yeastar gateway host or IP
+    'port'         => 5038,               // AMI port (default: 5038)
+    'gateway_port' => 1,                  // trunk port (default: 1)
+    'account'      => 'username',
+    'password'     => 'password',
+    'to'           => '0039123456789',    // recipient number with country code
+    'message'      => 'Your message here',
+    'timeout'      => 5,                  // socket timeout in seconds (default: 5)
+    'debug'        => true,               // optional: enable debug logging
+]);
+
+try {
+    $sms->sendSms();
+} catch (SocketConnectionException $e) {
+    // connection or authentication failed
+    echo $e->getMessage();
+} catch (SmsSendException $e) {
+    // SMS command failed
+    echo $e->getMessage();
+} finally {
+    $sms->closeSocket();
+}
 ```
 
 ## Debug
-Setting the `debug` param to `true`, you can access to the `log` property array
+
+Set `debug` to `true` to collect log messages:
 
 ```php
-print_r($s->log); // print log message array
+print_r($sms->log);
 ```
+
+## Exceptions
+
+| Exception | When |
+|---|---|
+| `SocketConnectionException` | Cannot connect to the gateway or authentication fails |
+| `SmsSendException` | SMS command fails or recipient is missing |
+
+## License
+
+MIT

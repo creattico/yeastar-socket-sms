@@ -1,15 +1,15 @@
 {
     "name": "creattico/yeastar-socket-sms",
-    "description": "SMS class for yeastar device: allow you to send sms via socket API",
+    "description": "PHP class to send SMS via socket API through Yeastar TGxxxx gateways",
     "type": "library",
     "require": {
-        "php": ">=7.2"
+        "php": ">=7.4"
     },
     "license": "MIT",
     "authors": [
         {
-            "name": "creattico",
-            "email": "info@creattica.it"
+            "name": "Domenico Carbone",
+            "email": "dev@creattica.it"
         }
     ],
     "minimum-stability": "stable",
