@@ -96,6 +96,32 @@ class SocketApi
     protected bool $debug = false;
 
     /**
+     * Wait for the gateway to confirm the message actually went out.
+     *
+     * Off by default: until v1.1 `sendSms()` never threw, and turning this on
+     * gives it a failure mode existing callers are not catching yet.
+     *
+     * @var bool
+     */
+    protected bool $confirm = false;
+
+    /**
+     * Seconds to wait for the `UpdateSMSSend` event when $confirm is on.
+     *
+     * On a real TG400 the event lands three to four seconds after the command.
+     *
+     * @var int
+     */
+    protected int $send_timeout = 20;
+
+    /**
+     * Seconds to wait for a read command to return its block.
+     *
+     * @var int
+     */
+    protected int $command_timeout = 10;
+
+    /**
      * Socket file pointer
      *
      * @var resource|false
@@ -146,6 +172,10 @@ class SocketApi
 
         $this->log("Socket with {$this->host} opened");
 
+        // Never add `Events: off` to this login. It is tempting — it quietens the
+        // socket — but it also suppresses `UpdateSMSSend`, the one event that
+        // tells a delivered message from a swallowed one. With it on, $confirm
+        // would silently degrade back to the pre-1.2 behaviour.
         $written = fwrite($this->fp, "Action: Login\r\nUsername: " . urlencode($this->account) . "\r\nSecret: " . urlencode($this->password) . "\r\n\r\n");
 
         if (!$written) {
@@ -213,22 +243,194 @@ class SocketApi
 
         $this->log("SMS command sent (id: {$this->smsId})");
 
-        $response = '';
-        for ($i = 0; $i < 4; $i++) {
-            $line = fgets($this->fp);
-            if ($line !== false) {
-                $response .= $line;
+        if (!$this->confirm) {
+            // Pre-1.2 behaviour, kept for callers that are not catching
+            // SmsSendException yet. It only proves the gateway took the
+            // command, never that the message left the device.
+            $response = '';
+            for ($i = 0; $i < 4; $i++) {
+                $line = fgets($this->fp);
+                if ($line !== false) {
+                    $response .= $line;
+                }
+            }
+
+            if (empty(trim($response))) {
+                $this->log("Empty response after SMS command");
+                throw new SmsSendException("Empty response from gateway after SMS command");
+            }
+
+            $this->log("SMS command acknowledged, delivery not verified (id: {$this->smsId})");
+
+            return true;
+        }
+
+        $status = $this->awaitSendConfirmation();
+
+        if ($status === null) {
+            $this->log("No UpdateSMSSend event within {$this->send_timeout}s (id: {$this->smsId})");
+            throw new SmsSendException(
+                "Gateway never confirmed the SMS (id: {$this->smsId}): no UpdateSMSSend event "
+                . "within {$this->send_timeout} seconds. The message did not go out."
+            );
+        }
+
+        if ($status !== 1) {
+            $this->log("UpdateSMSSend reported status {$status} (id: {$this->smsId})");
+            throw new SmsSendException("Gateway reported status {$status} for SMS {$this->smsId}");
+        }
+
+        $this->log("SMS confirmed sent (id: {$this->smsId})");
+
+        return true;
+    }
+
+    /**
+     * Read the socket until the gateway confirms this send, or the wait runs out.
+     *
+     * @return int|null The reported status, or null if no matching event arrived
+     */
+    protected function awaitSendConfirmation(): ?int
+    {
+        $raw      = '';
+        $deadline = microtime(true) + $this->send_timeout;
+
+        stream_set_blocking($this->fp, false);
+
+        while (microtime(true) < $deadline) {
+            $chunk = fread($this->fp, 8192);
+
+            if ($chunk !== false && $chunk !== '') {
+                $raw .= $chunk;
+
+                $status = self::parseSendConfirmation($raw, $this->smsId);
+                if ($status !== null) {
+                    stream_set_blocking($this->fp, true);
+                    return $status;
+                }
+
+                continue;
+            }
+
+            if (feof($this->fp)) {
+                break;
+            }
+
+            usleep(100000);
+        }
+
+        stream_set_blocking($this->fp, true);
+
+        return null;
+    }
+
+    /**
+     * Run a read command on an already open session and return its raw block.
+     *
+     * The gateway answers with `Response: Follows`, the payload, and the
+     * `--END COMMAND--` terminator followed by a blank line. The whole block is
+     * consumed — trailing blank line included — so that a second command on the
+     * same connection does not pick up the tail of the first.
+     *
+     * Nothing here interprets the payload: what counts as a healthy port is a
+     * question for the caller, not for the protocol.
+     *
+     * @throws SocketConnectionException if the session is not open or the write fails
+     */
+    public function command(string $command): string
+    {
+        if (!$this->fp) {
+            throw new SocketConnectionException("Socket is not open — call openSocket() first");
+        }
+
+        $written = fwrite($this->fp, "Action: smscommand\r\ncommand: {$command}\r\n\r\n");
+
+        if (!$written) {
+            $this->log("Error writing command to socket: {$command}");
+            throw new SocketConnectionException("Failed to write command to socket");
+        }
+
+        $this->log("Command sent: {$command}");
+
+        $raw      = '';
+        $deadline = microtime(true) + $this->command_timeout;
+
+        stream_set_blocking($this->fp, false);
+
+        while (microtime(true) < $deadline) {
+            $chunk = fread($this->fp, 8192);
+
+            if ($chunk !== false && $chunk !== '') {
+                $raw .= $chunk;
+
+                if (preg_match('/--END COMMAND--\r?\n\r?\n/', $raw)) {
+                    break;
+                }
+
+                continue;
+            }
+
+            if (feof($this->fp)) {
+                break;
+            }
+
+            usleep(50000);
+        }
+
+        stream_set_blocking($this->fp, true);
+
+        $this->log("Command response read (" . strlen($raw) . " bytes)");
+
+        return $raw;
+    }
+
+    /**
+     * Extract the delivery status of a sent SMS from a raw gateway response.
+     *
+     * The gateway acknowledges the command immediately with `Response: Follows`,
+     * identically whether the message goes out or not. What tells the two apart
+     * is an asynchronous `UpdateSMSSend` event emitted a few seconds later.
+     *
+     * @param  string $raw   Raw text read from the socket after the send command
+     * @param  string $smsId The identifier passed to `gsm send sms`
+     * @return int|null      The reported status, or null when no matching event is present
+     */
+    public static function parseSendConfirmation(string $raw, string $smsId): ?int
+    {
+        $insideEvent = false;
+        $id          = null;
+        $status      = null;
+
+        foreach (preg_split('/\r\n|\r|\n/', $raw) as $line) {
+            $line = trim($line);
+
+            if ($line === 'Event: UpdateSMSSend') {
+                $insideEvent = true;
+                $id          = null;
+                $status      = null;
+                continue;
+            }
+
+            if (!$insideEvent) {
+                continue;
+            }
+
+            if ($line === '--END SMS EVENT--') {
+                if ($id === $smsId && $status !== null) {
+                    return $status;
+                }
+                $insideEvent = false;
+                continue;
+            }
+
+            if (strncmp($line, 'ID:', 3) === 0) {
+                $id = trim(substr($line, 3));
+            } elseif (strncmp($line, 'Status:', 7) === 0) {
+                $status = (int) trim(substr($line, 7));
             }
         }
 
-        if (empty(trim($response))) {
-            $this->log("Empty response after SMS command");
-            throw new SmsSendException("Empty response from gateway after SMS command");
-        }
-
-        $this->log("SMS sent successfully (id: {$this->smsId})");
-
-        return true;
+        return null;
     }
 
     /**

@@ -1,0 +1,11 @@
+Response: Follows
+Privilege: SMSCommand
+--END COMMAND--
+
+Event: UpdateSMSSend
+Privilege: all,smscommand
+ID: probe41789832511
+Smsc: +393359609600
+Status: 1
+--END SMS EVENT--
+

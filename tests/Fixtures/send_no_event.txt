@@ -1,0 +1,4 @@
+Response: Follows
+Privilege: SMSCommand
+--END COMMAND--
+
