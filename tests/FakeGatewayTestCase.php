@@ -47,6 +47,20 @@ abstract class FakeGatewayTestCase extends TestCase
         return $this->gatewayPort = (int) trim($port);
     }
 
+    /**
+     * I blocchi AMI ricevuti dal gateway dopo il login, cosi' come sono arrivati.
+     *
+     * Legge fino alla chiusura del processo: va chiamato dopo closeSocket().
+     *
+     * @return array<int, string>
+     */
+    protected function requestsReceived(): array
+    {
+        $lines = array_filter(explode("\n", stream_get_contents($this->pipes[1])));
+
+        return array_values(array_map('base64_decode', $lines));
+    }
+
     protected function tearDown(): void
     {
         foreach ($this->pipes as $pipe) {

@@ -68,6 +68,26 @@ rather than inside a web request.
 on a swallowed message, and existing callers are not catching that case yet. New code should
 turn it on.
 
+## What gets cleaned before sending
+
+The recipient and the text end up on a single line of the AMI protocol:
+
+```
+command: gsm send sms <span> <number> "<text>" <id>
+```
+
+Since v1.2.1 `sendSms()` makes both safe for that line, whoever wrote them:
+
+- **Number:** spaces, dashes, dots, slashes and brackets are removed. If anything other than
+  digits and a leading `+` is left, it throws `SmsSendException` before connecting. There is no
+  length check: what counts as a plausible number is up to your application.
+- **Text:** line breaks and other control characters become a space, `"` becomes `'` and `\`
+  becomes `/`. The text is changed rather than refused, because the recipient still reads the
+  same thing.
+
+`command()` throws `InvalidArgumentException` if the command contains a control character. Never
+build one from user input: the same connection accepts `gsm send ussd`.
+
 ## Reading gateway status
 
 The same connection can run read commands, which is how you find out which ports are usable:
@@ -118,7 +138,8 @@ print_r($sms->log);
 | Exception | When |
 |---|---|
 | `SocketConnectionException` | Cannot connect to the gateway, authentication fails, or a command is issued on a closed session |
-| `SmsSendException` | Recipient missing, or — with `confirm` on — the gateway never confirmed the message left the device |
+| `SmsSendException` | Recipient missing or invalid, or — with `confirm` on — the gateway never confirmed the message left the device |
+| `InvalidArgumentException` | `command()` received a command with a control character |
 
 ## Tests
 

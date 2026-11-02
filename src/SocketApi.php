@@ -217,24 +217,24 @@ class SocketApi
      * Send SMS message via socket.
      *
      * @throws SocketConnectionException if the connection fails
-     * @throws SmsSendException if the SMS cannot be sent or the recipient is missing
+     * @throws SmsSendException if the SMS cannot be sent or the recipient is missing or invalid
      * @return bool True if the message was sent successfully
      */
     public function sendSms(): bool
     {
+        // Before the connection: a number that cannot be sent has no business
+        // opening a session on the device.
+        $to = self::commandLineNumber($this->to);
+
         $this->openSocket();
 
         if (!$this->fp) {
             throw new SocketConnectionException("Socket is not open");
         }
 
-        if (empty($this->to)) {
-            throw new SmsSendException("Recipient phone number is required");
-        }
-
         $this->smsId = (string) (time() . rand());
 
-        $written = fwrite($this->fp, "Action: smscommand\r\ncommand: gsm send sms " . $this->gateway_port . " " . $this->to . " \"" . $this->message . "\" " . $this->smsId . "\r\n\r\n");
+        $written = fwrite($this->fp, "Action: smscommand\r\ncommand: gsm send sms " . $this->gateway_port . " " . $to . " \"" . self::commandLineText($this->message) . "\" " . $this->smsId . "\r\n\r\n");
 
         if (!$written) {
             $this->log("Error writing SMS command to socket");
@@ -283,6 +283,44 @@ class SocketApi
         $this->log("SMS confirmed sent (id: {$this->smsId})");
 
         return true;
+    }
+
+    /**
+     * The recipient as the command line needs it: digits, with a leading + if any.
+     *
+     * Spaces, dashes, dots, slashes and brackets are how people write numbers, so
+     * they go. Anything else is not a number, and in this position it would move
+     * the arguments of the command or end the command altogether.
+     *
+     * @throws SmsSendException if nothing usable is left
+     */
+    protected static function commandLineNumber(string $to): string
+    {
+        $number = preg_replace('#[ .\-/()]#', '', $to);
+
+        if ($number === '') {
+            throw new SmsSendException("Recipient phone number is required");
+        }
+
+        // \z and not $: $ would let a trailing newline through.
+        if (!preg_match('/^\+?\d+\z/', $number)) {
+            throw new SmsSendException("Invalid recipient phone number: only digits and a leading + are allowed");
+        }
+
+        return $number;
+    }
+
+    /**
+     * The message as it can sit between the quotes of the command line.
+     *
+     * A line break ends the command and starts another one on the device, which
+     * also accepts `gsm send ussd`. A double quote ends the text, and a backslash
+     * escapes what follows it in Asterisk's parser, closing quote included. These
+     * are replaced, not refused: the recipient still reads the same thing.
+     */
+    protected static function commandLineText(string $message): string
+    {
+        return str_replace(['"', '\\'], ["'", '/'], preg_replace('/[\x00-\x1F\x7F]+/', ' ', $message));
     }
 
     /**
@@ -336,9 +374,15 @@ class SocketApi
      * question for the caller, not for the protocol.
      *
      * @throws SocketConnectionException if the session is not open or the write fails
+     * @throws \InvalidArgumentException if the command contains control characters,
+     *         which would end it and start another one on the device
      */
     public function command(string $command): string
     {
+        if (preg_match('/[\x00-\x1F\x7F]/', $command)) {
+            throw new \InvalidArgumentException("A command must fit on a single line");
+        }
+
         if (!$this->fp) {
             throw new SocketConnectionException("Socket is not open — call openSocket() first");
         }

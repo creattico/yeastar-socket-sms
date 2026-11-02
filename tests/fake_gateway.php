@@ -66,6 +66,10 @@ while (!feof($client)) {
         break;
     }
 
+    // Ogni blocco ricevuto, cosi' i test vedono i byte arrivati al gateway.
+    fwrite(STDOUT, base64_encode($request) . "\n");
+    fflush(STDOUT);
+
     if (!preg_match('/^command:\s*(.+?)\s*$/mi', $request, $cm)) {
         continue;
     }
